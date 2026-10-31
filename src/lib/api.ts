@@ -627,11 +627,6 @@ export const apiClient = {
   },
 
   async duplicateAdminJob(id: string): Promise<Job | null> {
-    const source = await this.getAdminJobById(id);
-    if (!source) return null;
-    const { id: _id, category_name: _categoryName, category_slug: _categorySlug, location_name: _locationName, location_slug: _locationSlug, location_province: _locationProvince, ...data } = source;
-    const copy = await this.saveAdminJob(null, { ...data, title: `${source.title} (Copy)`, status: 'draft', featured: false, published_at: null, views_count: 0 });
-    return copy.job || null;
     try {
       const res = await safeFetchJson<{ job: Job }>(`/api/admin/jobs/${id}/duplicate`, {
         method: 'POST',
@@ -644,6 +639,27 @@ export const apiClient = {
         return res.data.job;
       }
     } catch {}
+
+    const all = getStoredJobs();
+    const item = all.find((j) => j.id === id);
+    if (!item) return null;
+
+    const copyId = 'job_' + Date.now();
+    const jobCopy: Job = {
+      ...item,
+      id: copyId,
+      title: `${item.title} (Copy)`,
+      slug: `${item.slug}-copy-${Date.now().toString().slice(-4)}`,
+      status: 'draft',
+      views_count: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    all.unshift(jobCopy);
+    saveStoredJobs(all);
+    addActivityLog('admin', 'Duplicated Vacancy', 'job', jobCopy.title);
+    return jobCopy;
+  },
 
     const all = getStoredJobs();
     const item = all.find((j) => j.id === id);
