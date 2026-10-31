@@ -1,8 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "jobsmart-lk",
-  "compatibility_date": "2026-04-01",
+  "name": "jobsmart",
+  "compatibility_date": "2026-10-31",
   "assets": {
-    "directory": "./dist"
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
   }
 }
