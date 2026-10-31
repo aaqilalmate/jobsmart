@@ -202,7 +202,7 @@ export async function safeFetchJson<T>(
     const res = await fetch(url, {
       ...options,
       headers,
-      credentials: 'include', // Ensure session cookies are sent across origin & iframe
+      credentials: 'include',
     });
 
     const contentType = res.headers.get('content-type') || '';
@@ -250,7 +250,7 @@ export const apiClient = {
   },
 
   // ----------------------------------------------------
-  // PUBLIC JOBS (with reactive search, district & salary filtering)
+  // PUBLIC JOBS
   // ----------------------------------------------------
   async getJobs(params: {
     q?: string;
@@ -264,16 +264,6 @@ export const apiClient = {
     page?: number;
     limit?: number;
   }): Promise<{ jobs: Job[]; pagination: { total: number; page: number; limit: number; totalPages: number } }> {
-    const query = new URLSearchParams();
-    if (params.q) query.set('q', params.q);
-    if (params.category && params.category !== 'all') query.set('category', params.category);
-    if (params.location && params.location !== 'all') query.set('location', params.location);
-    if (params.employment_type && params.employment_type !== 'all') query.set('employment_type', params.employment_type);
-    if (params.workplace_type && params.workplace_type !== 'all') query.set('workplace_type', params.workplace_type);
-    if (params.featured) query.set('featured', params.featured);
-    if (params.page) query.set('page', params.page.toString());
-    if (params.limit) query.set('limit', params.limit.toString());
-
     const allJobs = await supabaseFetch<Job[]>(`/rest/v1/jobs?select=*,category:job_categories(name,slug),location:locations(name,slug,province)&status=eq.published&order=created_at.desc`);
     let filtered = allJobs.map((j: any) => ({ ...j, category_name: j.category?.name, category_slug: j.category?.slug, location_name: j.location?.name, location_slug: j.location?.slug, location_province: j.location?.province }));
 
@@ -307,7 +297,6 @@ export const apiClient = {
       filtered = filtered.filter((j) => Boolean(j.featured));
     }
 
-    // Salary filter logic: min salary + negotiable tick box
     if (params.min_salary && params.min_salary > 0) {
       const minSalary = params.min_salary;
       filtered = filtered.filter((j) => {
@@ -346,7 +335,7 @@ export const apiClient = {
   },
 
   // ----------------------------------------------------
-  // SETTINGS (Employer Ad Popup ON / OFF)
+  // SETTINGS
   // ----------------------------------------------------
   async getSettings(): Promise<{ employer_popup_enabled: boolean }> {
     const res = await safeFetchJson<{ settings: { employer_popup_enabled: boolean } }>('/api/settings/public');
@@ -428,7 +417,7 @@ export const apiClient = {
   },
 
   // ----------------------------------------------------
-  // ADMIN VACANCY CRUD (Resilient and always populated)
+  // ADMIN VACANCY CRUD
   // ----------------------------------------------------
   async getAdminJobs(params: {
     q?: string;
@@ -436,12 +425,6 @@ export const apiClient = {
     page?: number;
     limit?: number;
   }): Promise<{ jobs: Job[]; pagination: { total: number; page: number; limit: number; totalPages: number } }> {
-    const query = new URLSearchParams();
-    if (params.q) query.set('q', params.q);
-    if (params.status && params.status !== 'all') query.set('status', params.status);
-    if (params.page) query.set('page', params.page.toString());
-    if (params.limit) query.set('limit', params.limit.toString());
-
     const rows: any[] = await supabaseFetch(`/rest/v1/jobs?select=*,category:job_categories(name,slug),location:locations(name,slug,province)&order=created_at.desc`, {}, getStoredToken() || undefined);
     let filtered: Job[] = rows.map((j) => ({ ...j, category_name: j.category?.name, category_slug: j.category?.slug, location_name: j.location?.name, location_slug: j.location?.slug, location_province: j.location?.province }));
 
@@ -514,198 +497,56 @@ export const apiClient = {
     }
   },
 
-    // 1. Try server
-    try {
-      const res = await safeFetchJson<{ success: boolean; job: Job; error?: string }>(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(jobData),
-      });
-
-      if (res.ok && res.data?.job) {
-        const all = getStoredJobs();
-        const index = all.findIndex((j) => j.id === res.data!.job.id);
-        if (index >= 0) {
-          all[index] = res.data.job;
-        } else {
-          all.unshift(res.data.job);
-        }
-        saveStoredJobs(all);
-        addActivityLog('admin', id ? 'Updated Vacancy' : 'Created Vacancy', 'job', res.data.job.title);
-        return { success: true, job: res.data.job };
-      }
-    } catch {}
-
-    // 2. Client-side fallback save
-    const all = getStoredJobs();
-    const categories = INITIAL_CATEGORIES;
-    const locations = SRI_LANKA_DISTRICTS;
-
-    const cat = categories.find((c) => c.id === jobData.category_id);
-    const loc = locations.find((l) => l.id === jobData.location_id);
-
-    const now = new Date().toISOString();
-    let savedJob: Job;
-
-    if (id) {
-      const existingIdx = all.findIndex((j) => j.id === id);
-      if (existingIdx >= 0) {
-        savedJob = {
-          ...all[existingIdx],
-          ...jobData,
-          category_name: cat?.name || all[existingIdx].category_name,
-          category_slug: cat?.slug || all[existingIdx].category_slug,
-          location_name: loc?.name || all[existingIdx].location_name,
-          location_slug: loc?.slug || all[existingIdx].location_slug,
-          location_province: loc?.province || all[existingIdx].location_province,
-          updated_at: now,
-        };
-        all[existingIdx] = savedJob;
-      } else {
-        savedJob = {
-          ...jobData,
-          id,
-          created_at: now,
-          updated_at: now,
-        };
-        all.unshift(savedJob);
-      }
-    } else {
-      const newId = 'job_' + Date.now();
-      const slug = jobData.title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)/g, '') + '-' + (loc?.slug || 'sri-lanka');
-
-      savedJob = {
-        ...jobData,
-        id: newId,
-        slug,
-        category_name: cat?.name || 'General',
-        category_slug: cat?.slug || 'general',
-        location_name: loc?.name || 'Colombo',
-        location_slug: loc?.slug || 'colombo',
-        location_province: loc?.province || 'Western Province',
-        views_count: 0,
-        published_at: jobData.status === 'published' ? now : null,
-        created_at: now,
-        updated_at: now,
-      };
-      all.unshift(savedJob);
-    }
-
-    saveStoredJobs(all);
-    addActivityLog('admin', id ? 'Updated Vacancy (Local)' : 'Created Vacancy (Local)', 'job', savedJob.title);
-    return { success: true, job: savedJob };
-  },
-
   async deleteAdminJob(id: string): Promise<boolean> {
-    await supabaseFetch(`/rest/v1/jobs?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' }, getStoredToken() || undefined); return true;
     try {
-      await safeFetchJson(`/api/admin/jobs/${id}`, { method: 'DELETE' });
-    } catch {}
-    const all = getStoredJobs();
-    const target = all.find((j) => j.id === id);
-    const updated = all.filter((j) => j.id !== id);
-    saveStoredJobs(updated);
-    addActivityLog('admin', 'Deleted Vacancy', 'job', target?.title || id);
-    return true;
+      await supabaseFetch(`/rest/v1/jobs?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' }, getStoredToken() || undefined);
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   async toggleAdminJobFeatured(id: string, current: boolean): Promise<boolean> {
-    await supabaseFetch(`/rest/v1/jobs?id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ featured: !current, updated_at: new Date().toISOString() }) }, getStoredToken() || undefined); return true;
     try {
-      await safeFetchJson(`/api/admin/jobs/${id}/featured`, {
+      await supabaseFetch(`/rest/v1/jobs?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ featured: !current }),
-      });
-    } catch {}
-    const all = getStoredJobs();
-    const item = all.find((j) => j.id === id);
-    if (item) {
-      item.featured = !current ? 1 : 0;
-      item.updated_at = new Date().toISOString();
-      saveStoredJobs(all);
-      addActivityLog('admin', !current ? 'Featured Job' : 'Unfeatured Job', 'job', item.title);
+        body: JSON.stringify({ featured: !current, updated_at: new Date().toISOString() }),
+      }, getStoredToken() || undefined);
+      return true;
+    } catch {
+      return false;
     }
-    return true;
   },
 
   async updateAdminJobStatus(id: string, newStatus: string): Promise<boolean> {
-    await supabaseFetch(`/rest/v1/jobs?id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status: newStatus, updated_at: new Date().toISOString() }) }, getStoredToken() || undefined); return true;
     try {
-      await safeFetchJson(`/api/admin/jobs/${id}/status`, {
+      await supabaseFetch(`/rest/v1/jobs?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-    } catch {}
-    const all = getStoredJobs();
-    const item = all.find((j) => j.id === id);
-    if (item) {
-      item.status = newStatus as any;
-      item.updated_at = new Date().toISOString();
-      saveStoredJobs(all);
-      addActivityLog('admin', `Changed Status to ${newStatus}`, 'job', item.title);
+        body: JSON.stringify({ status: newStatus, updated_at: new Date().toISOString() }),
+      }, getStoredToken() || undefined);
+      return true;
+    } catch {
+      return false;
     }
-    return true;
   },
 
   async duplicateAdminJob(id: string): Promise<Job | null> {
     try {
-      const res = await safeFetchJson<{ job: Job }>(`/api/admin/jobs/${id}/duplicate`, {
-        method: 'POST',
+      const source = await this.getAdminJobById(id);
+      if (!source) return null;
+      const { id: _id, category_name: _catName, category_slug: _catSlug, location_name: _locName, location_slug: _locSlug, location_province: _locProv, ...data } = source as any;
+      const result = await this.saveAdminJob(null, {
+        ...data,
+        title: `${source.title} (Copy)`,
+        status: 'draft',
+        featured: false,
+        published_at: null,
+        views_count: 0,
       });
-      if (res.ok && res.data?.job) {
-        const all = getStoredJobs();
-        all.unshift(res.data.job);
-        saveStoredJobs(all);
-        addActivityLog('admin', 'Duplicated Vacancy', 'job', res.data.job.title);
-        return res.data.job;
-      }
-    } catch {}
-
-    const all = getStoredJobs();
-    const item = all.find((j) => j.id === id);
-    if (!item) return null;
-
-    const copyId = 'job_' + Date.now();
-    const jobCopy: Job = {
-      ...item,
-      id: copyId,
-      title: `${item.title} (Copy)`,
-      slug: `${item.slug}-copy-${Date.now().toString().slice(-4)}`,
-      status: 'draft',
-      views_count: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    all.unshift(jobCopy);
-    saveStoredJobs(all);
-    addActivityLog('admin', 'Duplicated Vacancy', 'job', jobCopy.title);
-    return jobCopy;
-  },
-
-    const all = getStoredJobs();
-    const item = all.find((j) => j.id === id);
-    if (!item) return null;
-
-    const copyId = 'job_' + Date.now();
-    const copy: Job = {
-      ...item,
-      id: copyId,
-      title: `${item.title} (Copy)`,
-      slug: `${item.slug}-copy-${Date.now().toString().slice(-4)}`,
-      status: 'draft',
-      views_count: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    all.unshift(copy);
-    saveStoredJobs(all);
-    addActivityLog('admin', 'Duplicated Vacancy', 'job', copy.title);
-    return copy;
+      return result.job || null;
+    } catch {
+      return null;
+    }
   },
 
   // ----------------------------------------------------
@@ -717,8 +558,7 @@ export const apiClient = {
       return res.data;
     }
 
-    // Dynamic calculation from local storage
-    const allJobs = getStoredJobs();
+    const allJobs = await this.getAdminJobs({ limit: 100 }).then(r => r.jobs).catch(() => []);
     const requests: AdRequest[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]');
     const activityLogs: ActivityLog[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOGS) || '[]');
 
@@ -764,19 +604,6 @@ export const apiClient = {
     page?: number;
     limit?: number;
   }): Promise<{ requests: AdRequest[]; pagination: { total: number; page: number; limit: number; totalPages: number } }> {
-    const query = new URLSearchParams();
-    if (params.q) query.set('q', params.q);
-    if (params.status && params.status !== 'all') query.set('status', params.status);
-    if (params.payment_status && params.payment_status !== 'all') query.set('payment_status', params.payment_status);
-    if (params.has_poster && params.has_poster !== 'all') query.set('has_poster', params.has_poster);
-    if (params.page) query.set('page', params.page.toString());
-    if (params.limit) query.set('limit', params.limit.toString());
-
-    const res = await safeFetchJson<{ requests: AdRequest[]; pagination: any }>(`/api/admin/requests?${query.toString()}`);
-    if (res.ok && res.data?.requests) {
-      return res.data;
-    }
-
     const all: AdRequest[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]');
     let filtered = [...all];
 
@@ -818,10 +645,6 @@ export const apiClient = {
   },
 
   async getAdminRequestById(id: string): Promise<{ request: AdRequest; files: AdRequestFile[]; posterVersions: PosterVersion[] } | null> {
-    const res = await safeFetchJson<{ request: AdRequest; files: AdRequestFile[]; posterVersions: PosterVersion[] }>(`/api/admin/requests/${id}`);
-    if (res.ok && res.data?.request) {
-      return res.data;
-    }
     const all: AdRequest[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]');
     const req = all.find((r) => r.id === id);
     if (!req) return null;
@@ -833,14 +656,6 @@ export const apiClient = {
   },
 
   async updateAdminRequest(id: string, data: Partial<AdRequest>): Promise<boolean> {
-    try {
-      await safeFetchJson(`/api/admin/requests/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-    } catch {}
-
     const all: AdRequest[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]');
     const index = all.findIndex((r) => r.id === id);
     if (index >= 0) {
@@ -855,21 +670,10 @@ export const apiClient = {
   // ADMIN CONTACT INQUIRIES
   // ----------------------------------------------------
   async getAdminContactMessages(): Promise<ContactMessage[]> {
-    const res = await safeFetchJson<{ messages: ContactMessage[] }>('/api/admin/contact-messages');
-    if (res.ok && res.data?.messages) {
-      return res.data.messages;
-    }
     return JSON.parse(localStorage.getItem(STORAGE_KEYS.MESSAGES) || '[]');
   },
 
   async updateAdminContactMessage(id: string, status: string): Promise<boolean> {
-    try {
-      await safeFetchJson(`/api/admin/contact-messages/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-    } catch {}
     const messages: ContactMessage[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.MESSAGES) || '[]');
     const item = messages.find((m) => m.id === id);
     if (item) {
@@ -880,28 +684,13 @@ export const apiClient = {
   },
 
   // ----------------------------------------------------
-  // ADMIN USERS (Team)
+  // ADMIN USERS
   // ----------------------------------------------------
   async getAdminUsers(): Promise<AdminUser[]> {
-    const res = await safeFetchJson<{ users: AdminUser[] }>('/api/admin/users');
-    if (res.ok && res.data?.users) {
-      return res.data.users;
-    }
     return JSON.parse(localStorage.getItem(STORAGE_KEYS.ADMIN_USERS) || '[]');
   },
 
   async createAdminUser(userData: any): Promise<{ success: boolean; user?: AdminUser; error?: string }> {
-    try {
-      const res = await safeFetchJson<{ success: boolean; user: AdminUser; error?: string }>('/api/admin/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userData),
-      });
-      if (res.ok && res.data?.user) {
-        return { success: true, user: res.data.user };
-      }
-    } catch {}
-
     const users: AdminUser[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ADMIN_USERS) || '[]');
     const newUser: AdminUser = {
       id: 'usr_' + Date.now(),
@@ -923,10 +712,6 @@ export const apiClient = {
   // ADMIN ACTIVITY LOGS
   // ----------------------------------------------------
   async getAdminActivityLogs(page = 1, limit = 25): Promise<{ logs: ActivityLog[]; total: number; totalPages: number }> {
-    const res = await safeFetchJson<{ logs: ActivityLog[]; total: number; totalPages: number }>(`/api/admin/activity-logs?page=${page}&limit=${limit}`);
-    if (res.ok && res.data?.logs) {
-      return res.data;
-    }
     const all: ActivityLog[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOGS) || '[]');
     const total = all.length;
     const totalPages = Math.ceil(total / limit) || 1;
@@ -939,19 +724,9 @@ export const apiClient = {
   },
 
   // ----------------------------------------------------
-  // PUBLIC CONTACT SUBMISSION
+  // PUBLIC CONTACT & AD REQUEST SUBMISSION
   // ----------------------------------------------------
   async submitContact(data: { full_name: string; email: string; phone?: string; subject: string; message: string }): Promise<{ success: boolean; message: string }> {
-    const res = await safeFetchJson<{ success: boolean; message: string }>('/api/contact', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-
-    if (res.ok && res.data?.success) {
-      return res.data;
-    }
-
     const existing = JSON.parse(localStorage.getItem(STORAGE_KEYS.MESSAGES) || '[]');
     existing.unshift({
       id: 'msg_' + Date.now(),
@@ -961,27 +736,10 @@ export const apiClient = {
       created_at: new Date().toISOString(),
     });
     localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(existing));
-
     return { success: true, message: 'Thank you for reaching out. We will get back to you shortly.' };
   },
 
-  // ----------------------------------------------------
-  // PUBLIC AD REQUEST SUBMISSION
-  // ----------------------------------------------------
   async submitAdRequest(formData: FormData): Promise<{ success: boolean; reference_no?: string; error?: string }> {
-    try {
-      const res = await fetch('/api/requests', {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await res.json();
-        if (res.ok && data.success) return data;
-      }
-    } catch {}
-
     const randomSuffix = Math.floor(100000 + Math.random() * 900000);
     const ref = `JS-2026-${randomSuffix}`;
     const stored: AdRequest[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]');
@@ -1021,19 +779,10 @@ export const apiClient = {
       updated_at: new Date().toISOString(),
     });
     localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(stored));
-
     return { success: true, reference_no: ref };
   },
 
-  // ----------------------------------------------------
-  // PUBLIC TRACK AD REQUEST
-  // ----------------------------------------------------
   async trackRequest(ref: string): Promise<any | null> {
-    const res = await safeFetchJson<{ request: any }>(`/api/requests/track/${ref}`);
-    if (res.ok && res.data?.request) {
-      return res.data.request;
-    }
-
     const stored: any[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]');
     const match = stored.find((r) => r.reference_no?.toUpperCase() === ref.trim().toUpperCase());
     return match || null;
