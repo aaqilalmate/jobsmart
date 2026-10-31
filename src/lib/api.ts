@@ -480,13 +480,39 @@ export const apiClient = {
   async saveAdminJob(id: string | null, jobData: any): Promise<{ success: boolean; job?: Job; error?: string }> {
     try {
       const timestamp = new Date().toISOString();
-      const payload = { ...jobData, salary_visible: Boolean(jobData.salary_visible), featured: Boolean(jobData.featured), deadline: jobData.deadline || null, updated_at: timestamp, ...(id ? {} : { id: crypto.randomUUID(), slug: `${String(jobData.title || 'job').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}-${Date.now()}`, created_at: timestamp, views_count: 0, published_at: jobData.status === 'published' ? timestamp : null }) };
-      const saved: Job[] = await supabaseFetch(`/rest/v1/jobs${id ? `?id=eq.${encodeURIComponent(id)}` : ''}`, { method: id ? 'PATCH' : 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(payload) }, getStoredToken() || undefined);
+      const payload = {
+        ...jobData,
+        salary_visible: Boolean(jobData.salary_visible),
+        featured: Boolean(jobData.featured),
+        deadline: jobData.deadline || null,
+        updated_at: timestamp,
+        ...(id
+          ? {}
+          : {
+              id: crypto.randomUUID(),
+              slug: `${String(jobData.title || 'job')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/(^-|-$)/g, '')}-${Date.now()}`,
+              created_at: timestamp,
+              views_count: 0,
+              published_at: jobData.status === 'published' ? timestamp : null,
+            }),
+      };
+      const saved: Job[] = await supabaseFetch(
+        `/rest/v1/jobs${id ? `?id=eq.${encodeURIComponent(id)}` : ''}`,
+        {
+          method: id ? 'PATCH' : 'POST',
+          headers: { Prefer: 'return=representation' },
+          body: JSON.stringify(payload),
+        },
+        getStoredToken() || undefined
+      );
       return { success: true, job: saved[0] };
-    } catch (error: any) { return { success: false, error: error.message || 'Unable to save job.' }; }
-    /* Legacy local-storage implementation retained below is unreachable. */
-    const url = id ? `/api/admin/jobs/${id}` : '/api/admin/jobs';
-    const method = id ? 'PUT' : 'POST';
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Unable to save job.' };
+    }
+  },
 
     // 1. Try server
     try {
